@@ -1,11 +1,23 @@
-import os
-from google import genai
-from google.genai import types
+from config import get_settings
 
 class GeminiService:
     def __init__(self):
-        # Initialize the genai client
-        self.client = genai.Client(api_key=os.getenv("GEMINI_KEY"))
+        try:
+            from google import genai  # type: ignore
+            from google.genai import types  # type: ignore
+        except Exception as e:  # pragma: no cover
+            raise RuntimeError(
+                "Missing dependency for Gemini. Install `google-genai` to enable AI extraction."
+            ) from e
+
+        self._types = types
+
+        settings = get_settings()
+        if not settings.gemini_key:
+            raise RuntimeError("Missing GEMINI_KEY. Set it in your environment or .env file.")
+
+        self.model = settings.gemini_model
+        self.client = genai.Client(api_key=settings.gemini_key)
 
     def extract_prescription(self, image) -> str:
         prompt = """
@@ -24,9 +36,9 @@ class GeminiService:
         """
         
         response = self.client.models.generate_content(
-            model='gemini-2.5-flash',
+            model=self.model,
             contents=[prompt, image],
-            config=types.GenerateContentConfig(
+            config=self._types.GenerateContentConfig(
                 response_mime_type="application/json",
             ),
         )
