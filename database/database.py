@@ -6,6 +6,11 @@ from config import get_settings
 _settings = get_settings()
 _database_url = _settings.database_url.strip()
 
+# Render may provide a DATABASE_URL with the legacy postgres:// scheme.
+# SQLAlchemy with Psycopg 3 requires postgresql+psycopg:// for that driver.
+if _database_url.startswith("postgres://"):
+    _database_url = _database_url.replace("postgres://", "postgresql+psycopg://", 1)
+
 if _database_url.startswith("sqlite"):
     engine = create_engine(
         _database_url,
