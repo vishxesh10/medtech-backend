@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import json
 import os
 from functools import lru_cache
 from pathlib import Path
 from typing import List
 
 try:
-    from pydantic import Field
+    from pydantic import Field, field_validator
     from pydantic_settings import BaseSettings, SettingsConfigDict
 
     _ENV_PATH = Path(__file__).resolve().parent / ".env"
@@ -23,6 +24,24 @@ try:
         app_version: str = "0.1.0"
 
         cors_allow_origins: List[str] = Field(default_factory=lambda: ["*"])
+
+        @field_validator("cors_allow_origins", mode="before")
+        @classmethod
+        def parse_cors_origins(cls, v):
+            if isinstance(v, list):
+                return v
+            if isinstance(v, str):
+                # Try JSON first
+                try:
+                    return json.loads(v)
+                except (json.JSONDecodeError, ValueError):
+                    pass
+                # Fall back to comma-separated
+                if "," in v:
+                    return [x.strip() for x in v.split(",")]
+                # Single value
+                return [v.strip()]
+            return ["*"]
 
         api_bearer_token: str | None = Field(default=None, validation_alias="API_BEARER_TOKEN")
 
