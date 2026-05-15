@@ -8,8 +8,14 @@ _database_url = _settings.database_url.strip()
 
 # Render may provide a DATABASE_URL with the legacy postgres:// scheme.
 # SQLAlchemy with Psycopg 3 requires postgresql+psycopg:// for that driver.
-if _database_url.startswith("postgres://"):
-    _database_url = _database_url.replace("postgres://", "postgresql+psycopg://", 1)
+def normalize_postgres_url(url: str) -> str:
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql+psycopg://", 1)
+    if url.startswith("postgresql://"):
+        return url.replace("postgresql://", "postgresql+psycopg://", 1)
+    return url
+
+_database_url = normalize_postgres_url(_database_url)
 
 if _database_url.startswith("sqlite"):
     engine = create_engine(
