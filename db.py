@@ -1,10 +1,8 @@
 """
-Convenience DB imports.
-
-Lets modules do `import db` instead of reaching into `database.database`.
+Backward-compatibility alias for the database module.
+Allows imports like `from db import get_db`.
 """
 
-from database import Base, SessionLocal, engine, get_db
+from database.database import client, database, get_db
 
-__all__ = ["Base", "SessionLocal", "engine", "get_db"]
-
+__all__ = ["client", "database", "get_db"]

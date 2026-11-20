@@ -1,41 +1,69 @@
-from sqlalchemy import create_engine
-from sqlalchemy.orm import declarative_base, sessionmaker
+from __future__ import annotations
+
+import logging
+from collections.abc import Generator
+import mongomock
+from pymongo import MongoClient
+from pymongo.database import Database
 
 from config import get_settings
 
+logger = logging.getLogger("medtech.database")
 _settings = get_settings()
-_database_url = _settings.database_url.strip()
 
-# Render may provide a DATABASE_URL with the legacy postgres:// scheme.
-# SQLAlchemy with Psycopg 3 requires postgresql+psycopg:// for that driver.
-def normalize_postgres_url(url: str) -> str:
-    if url.startswith("postgres://"):
-        return url.replace("postgres://", "postgresql+psycopg://", 1)
-    if url.startswith("postgresql://"):
-        return url.replace("postgresql://", "postgresql+psycopg://", 1)
-    return url
+client: MongoClient | mongomock.MongoClient
 
-_database_url = normalize_postgres_url(_database_url)
-
-if _database_url.startswith("sqlite"):
-    engine = create_engine(
-        _database_url,
-        connect_args={"check_same_thread": False},
-    )
-else:
-    engine = create_engine(
-        _database_url,
-        pool_pre_ping=True,
-    )
-
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-Base = declarative_base()
-
-
-def get_db():
-    db = SessionLocal()
+if _settings.database_mode == "mongodb":
+    print("\n" + "=" * 60)
+    print(f"[DATABASE] Connecting to MongoDB: {_settings.mongodb_url}")
     try:
-        yield db
-    finally:
-        db.close()
+        client = MongoClient(
+            _settings.mongodb_url,
+            serverSelectionTimeoutMS=5000,
+            connectTimeoutMS=5000,
+        )
+        # Test connection by pinging the database
+        client.admin.command("ping")
+        print(f"[DATABASE] SUCCESS: Connected to MongoDB database '{_settings.mongodb_database}'!")
+        print("=" * 60 + "\n")
+    except Exception as exc:
+        print("[DATABASE ERROR] FAILED to connect to MongoDB!")
+        print(f"Details: {exc}")
+        print("\nFix:")
+        print("1. Go to MongoDB Atlas (https://cloud.mongodb.com)")
+        print("2. Navigate to 'Network Access' -> Click 'Add IP Address'")
+        print("3. Select 'Allow Access from Anywhere' (0.0.0.0/0) and confirm.")
+        print("4. Verify your username and password in MONGODB_URL in .env.")
+        print("=" * 60 + "\n")
+        raise ConnectionError(
+            f"Could not connect to MongoDB. Please check your Atlas Network Access (IP whitelist) and credentials. Error: {exc}"
+        ) from exc
+else:
+    print("\n" + "=" * 60)
+    print("[DATABASE NOTICE] Running in MEMORY mode (mongomock).")
+    print("WARNING: Data is saved only in temporary RAM and NOT in real MongoDB!")
+    print("To save data permanently to MongoDB Atlas, set DATABASE_MODE=mongodb in your .env file.")
+    print("=" * 60 + "\n")
+    client = mongomock.MongoClient()
+
+database = client[_settings.mongodb_database]
+_indexed_database: Database | None = None
+
+
+def get_db() -> Generator[Database, None, None]:
+    """
+    FastAPI dependency to provide database session.
+    Ensures required database indexes exist on first call.
+    """
+    global _indexed_database
+    if _indexed_database is not database:
+        try:
+            # 1. Unique email index so duplicate user accounts cannot be created
+            database.users.create_index("email", unique=True)
+            # 2. Compound index on prescriptions for fast lookup by user and creation date
+            database.prescriptions.create_index([("user_id", 1), ("created_at", -1)])
+            _indexed_database = database
+        except Exception as err:
+            logger.warning("Index creation notice: %s", err)
+
+    yield database

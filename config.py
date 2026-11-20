@@ -1,88 +1,62 @@
 from __future__ import annotations
 
-import json
 import os
-from functools import lru_cache
-from pathlib import Path
-from typing import List
+from dotenv import load_dotenv
 
-try:
-    from pydantic import Field, field_validator
-    from pydantic_settings import BaseSettings, SettingsConfigDict
+# Load variables from .env file into environment
+load_dotenv()
 
-    _ENV_PATH = Path(__file__).resolve().parent / ".env"
 
-    class Settings(BaseSettings):
-        model_config = SettingsConfigDict(
-            env_file=_ENV_PATH if _ENV_PATH.is_file() else ".env",
-            env_file_encoding="utf-8",
-            extra="ignore",
+class Settings:
+    """
+    Application configuration settings.
+    Reads environment variables or provides safe default values for local development.
+    """
+
+    def __init__(self):
+        # Refresh environment variables from .env without overriding test fixtures
+        load_dotenv(override=False)
+
+        # Basic App Information
+        self.app_name = os.getenv("APP_NAME", "MedTech API")
+        self.app_description = os.getenv(
+            "APP_DESCRIPTION",
+            "AI-Powered Medical Prescription Digitizer and Management Backend",
         )
+        self.app_version = os.getenv("APP_VERSION", "1.0.0")
 
-        app_name: str = "MedTech API"
-        app_description: str = "API for MedTech AI application"
-        app_version: str = "0.1.0"
+        # CORS Settings (Allow cross-origin requests from frontend)
+        raw_origins = os.getenv("CORS_ALLOW_ORIGINS", "*")
+        self.cors_allow_origins = [
+            origin.strip() for origin in raw_origins.split(",") if origin.strip()
+        ]
 
-        cors_allow_origins: List[str] = Field(default_factory=lambda: ["*"])
-
-        @field_validator("cors_allow_origins", mode="before")
-        @classmethod
-        def parse_cors_origins(cls, v):
-            if isinstance(v, list):
-                return v
-            if isinstance(v, str):
-                # Try JSON first
-                try:
-                    return json.loads(v)
-                except (json.JSONDecodeError, ValueError):
-                    pass
-                # Fall back to comma-separated
-                if "," in v:
-                    return [x.strip() for x in v.split(",")]
-                # Single value
-                return [v.strip()]
-            return ["*"]
-
-        api_bearer_token: str | None = Field(default=None, validation_alias="API_BEARER_TOKEN")
-
-        jwt_secret_key: str = Field(
-            default="dev-only-change-JWT_SECRET_KEY-in-production",
-            validation_alias="JWT_SECRET_KEY",
+        # JWT Authentication Configuration
+        self.jwt_secret_key = os.getenv(
+            "JWT_SECRET_KEY", "dev-only-secret-key-change-in-production-12345"
         )
-        jwt_algorithm: str = Field(default="HS256", validation_alias="JWT_ALGORITHM")
-        access_token_expire_minutes: int = Field(
-            default=60 * 24 * 7,
-            validation_alias="ACCESS_TOKEN_EXPIRE_MINUTES",
-        )
+        self.jwt_algorithm = os.getenv("JWT_ALGORITHM", "HS256")
+        self.access_token_expire_minutes = int(
+            os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "10080")
+        )  # Default: 7 days
 
-        # PostgreSQL: postgresql+psycopg://USER:PASSWORD@HOST:5432/DBNAME
-        # Fallback for local/tests without Postgres: sqlite:///./prescriptions.db
-        database_url: str = Field(
-            default="sqlite:///./prescriptions.db",
-            validation_alias="DATABASE_URL",
-        )
+        # Database Configuration
+        # 'memory' = uses in-memory database (mongomock), perfect for testing without MongoDB installed
+        # 'mongodb' = connects to local or cloud MongoDB (e.g. MongoDB Atlas)
+        self.database_mode = os.getenv("DATABASE_MODE", "memory").strip().lower()
+        self.mongodb_url = os.getenv("MONGODB_URL", "mongodb://localhost:27017").strip()
+        self.mongodb_database = os.getenv("MONGODB_DATABASE", "medtech").strip()
 
-        gemini_key: str | None = Field(default=None, validation_alias="GEMINI_KEY")
-        gemini_model: str = Field(default="gemini-2.5-flash")
+        # Google Gemini AI Configuration
+        self.gemini_key = (os.getenv("GEMINI_KEY") or "").strip()
+        self.gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
 
-except ModuleNotFoundError:  # pragma: no cover
-
-    class Settings:
-        def __init__(self):
-            self.app_name = os.getenv("APP_NAME", "MedTech API")
-            self.app_description = os.getenv("APP_DESCRIPTION", "API for MedTech AI application")
-            self.app_version = os.getenv("APP_VERSION", "0.1.0")
-            self.cors_allow_origins = [o.strip() for o in os.getenv("CORS_ALLOW_ORIGINS", "*").split(",")]
-            self.api_bearer_token = os.getenv("API_BEARER_TOKEN")
-            self.jwt_secret_key = os.getenv("JWT_SECRET_KEY", "dev-only-change-JWT_SECRET_KEY-in-production")
-            self.jwt_algorithm = os.getenv("JWT_ALGORITHM", "HS256")
-            self.access_token_expire_minutes = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", str(60 * 24 * 7)))
-            self.database_url = os.getenv("DATABASE_URL", "sqlite:///./prescriptions.db")
-            self.gemini_key = os.getenv("GEMINI_KEY")
-            self.gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        # Optional Bearer Token
+        self.api_bearer_token = os.getenv("API_BEARER_TOKEN")
 
 
-@lru_cache
 def get_settings() -> Settings:
+    """
+    Returns current application settings.
+    """
     return Settings()
-

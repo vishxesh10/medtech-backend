@@ -1,24 +1,28 @@
-"""Test env + one-time Alembic upgrade for the test database."""
-
 from __future__ import annotations
 
 import os
+from importlib import import_module
 
-os.environ.setdefault("DATABASE_URL", "sqlite:///./test_prescriptions.db")
+# Force in-memory database and test secret for all automated tests
+os.environ["DATABASE_MODE"] = "memory"
+os.environ.setdefault("MONGODB_DATABASE", "medtech_test")
 os.environ.setdefault(
     "JWT_SECRET_KEY",
     "test-jwt-secret-key-minimum-32-characters-long!",
 )
 
+import mongomock
 import pytest
-from alembic import command
-from alembic.config import Config
 
 
 @pytest.fixture(scope="session", autouse=True)
-def _alembic_upgrade() -> None:
-    from config import get_settings
-
-    get_settings.cache_clear()
-    cfg = Config(os.path.join(os.path.dirname(__file__), "..", "alembic.ini"))
-    command.upgrade(cfg, "head")
+def _test_database():
+    """
+    Session-wide fixture that initializes an in-memory mongomock database.
+    """
+    database_module = import_module("database.database")
+    client = mongomock.MongoClient()
+    database_module.database = client["medtech_test"]
+    database_module._indexed_database = None
+    yield
+    client.close()

@@ -1,73 +1,140 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-
 import bcrypt
 import jwt
-from fastapi import Depends, HTTPException, status
+from bson import ObjectId
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy.orm import Session
+from pymongo.database import Database
 
 from config import Settings, get_settings
 from database import get_db
 from models.models import User
 
+# HTTP Bearer scheme for Authorization: Bearer <token>
 _bearer = HTTPBearer(auto_error=False)
 
 
 def hash_password(password: str) -> str:
-    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt(rounds=12)).decode("ascii")
+    """
+    Hash a plain text password using bcrypt with a generated salt.
+    """
+    salt = bcrypt.gensalt(rounds=10)
+    hashed_bytes = bcrypt.hashpw(password.encode("utf-8"), salt)
+    return hashed_bytes.decode("ascii")
 
 
-def verify_password(password: str, hashed: str) -> bool:
+def verify_password(password: str, hashed_password: str) -> bool:
+    """
+    Verify whether a plain text password matches the stored bcrypt hash.
+    """
     try:
-        return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("ascii"))
-    except ValueError:
+        return bcrypt.checkpw(
+            password.encode("utf-8"),
+            hashed_password.encode("ascii"),
+        )
+    except (ValueError, TypeError):
         return False
 
 
-def create_access_token(*, user_id: int, email: str, settings: Settings) -> str:
+def create_access_token(*, user_id: str, email: str, settings: Settings) -> str:
+    """
+    Create a signed JWT access token containing the user ID and expiration time.
+    """
     now = datetime.now(timezone.utc)
     expire = now + timedelta(minutes=settings.access_token_expire_minutes)
     payload = {
         "sub": str(user_id),
         "email": email,
-        "exp": expire,
         "iat": now,
+        "exp": expire,
     }
-    return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+    return jwt.encode(
+        payload,
+        settings.jwt_secret_key,
+        algorithm=settings.jwt_algorithm,
+    )
 
 
 def decode_token(token: str, settings: Settings) -> dict:
-    return jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
+    """
+    Decode and verify a JWT access token using the secret key.
+    """
+    return jwt.decode(
+        token,
+        settings.jwt_secret_key,
+        algorithms=[settings.jwt_algorithm],
+    )
 
 
 def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
     settings: Settings = Depends(get_settings),
-    db: Session = Depends(get_db),
+    db: Database = Depends(get_db),
 ) -> User:
-    if credentials is None:
+    """
+    FastAPI dependency to authenticate requests.
+    Supports BOTH:
+    1. Authorization: Bearer <token> header (standard API / Swagger UI)
+    2. 'access_token' cookie (browser automatic credentials)
+    """
+    if not isinstance(settings, Settings):
+        settings = get_settings()
+
+    token: str | None = None
+
+    # Step 1: Check Authorization header first
+    if credentials and credentials.credentials:
+        token = credentials.credentials
+    # Step 2: Fall back to HTTP cookie if header is not present
+    elif "access_token" in request.cookies:
+        token = request.cookies.get("access_token")
+
+    # Step 3: If no token found anywhere, reject request
+    if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated",
+            detail="Authentication required. Please log in.",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    token = credentials.credentials
+
+    # Step 4: Decode and validate JWT token
     try:
         payload = decode_token(token, settings)
-        user_id = int(payload["sub"])
+        user_id_str = payload.get("sub")
+        if not user_id_str:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token payload.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        user_id = ObjectId(user_id_str)
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Your login session has expired. Please log in again.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     except (jwt.PyJWTError, KeyError, ValueError, TypeError):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token",
+            detail="Invalid or malformed authentication token.",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    user = db.get(User, user_id)
-    if user is None:
+
+    # Step 5: Retrieve user from database
+    user_doc = db.users.find_one({"_id": user_id})
+    if user_doc is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found",
+            detail="User account not found. Please log in again.",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    return user
+
+    # Step 6: Return User model
+    return User(
+        id=str(user_doc["_id"]),
+        **{k: v for k, v in user_doc.items() if k != "_id"},
+    )
