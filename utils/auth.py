@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from typing import Any
 import bcrypt
 import jwt
 from bson import ObjectId
@@ -8,7 +9,7 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pymongo.database import Database
 
-from config import Settings, get_settings
+from config import get_settings
 from database import get_db
 from models.models import User
 
@@ -38,10 +39,13 @@ def verify_password(password: str, hashed_password: str) -> bool:
         return False
 
 
-def create_access_token(*, user_id: str, email: str, settings: Settings) -> str:
+def create_access_token(*, user_id: str, email: str, settings: Any = None) -> str:
     """
     Create a signed JWT access token containing the user ID and expiration time.
     """
+    if settings is None:
+        settings = get_settings()
+
     now = datetime.now(timezone.utc)
     expire = now + timedelta(minutes=settings.access_token_expire_minutes)
     payload = {
@@ -57,10 +61,13 @@ def create_access_token(*, user_id: str, email: str, settings: Settings) -> str:
     )
 
 
-def decode_token(token: str, settings: Settings) -> dict:
+def decode_token(token: str, settings: Any = None) -> dict:
     """
     Decode and verify a JWT access token using the secret key.
     """
+    if settings is None:
+        settings = get_settings()
+
     return jwt.decode(
         token,
         settings.jwt_secret_key,
@@ -71,16 +78,16 @@ def decode_token(token: str, settings: Settings) -> dict:
 def get_current_user(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
-    settings: Settings = Depends(get_settings),
+    settings: Any = Depends(get_settings),
     db: Database = Depends(get_db),
 ) -> User:
     """
-    FastAPI dependency to authenticate requests.
+    FastAPI dependency to authenticate requests (Pure Functional).
     Supports BOTH:
     1. Authorization: Bearer <token> header (standard API / Swagger UI)
     2. 'access_token' cookie (browser automatic credentials)
     """
-    if not isinstance(settings, Settings):
+    if settings is None or not hasattr(settings, "jwt_secret_key"):
         settings = get_settings()
 
     token: str | None = None

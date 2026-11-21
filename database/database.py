@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Generator
-import mongomock
+from typing import Any
+try:
+    import mongomock
+except ImportError:
+    mongomock = None
+
 from pymongo import MongoClient
 from pymongo.database import Database
 
@@ -11,33 +16,32 @@ from config import get_settings
 logger = logging.getLogger("medtech.database")
 _settings = get_settings()
 
-client: MongoClient | mongomock.MongoClient
+client: MongoClient | Any
 
 if _settings.database_mode == "mongodb":
     print("\n" + "=" * 60)
-    print(f"[DATABASE] Connecting to MongoDB: {_settings.mongodb_url}")
+    print(f"[DATABASE] Attempting to connect to MongoDB: {_settings.mongodb_url}")
     try:
         client = MongoClient(
             _settings.mongodb_url,
-            serverSelectionTimeoutMS=5000,
-            connectTimeoutMS=5000,
+            serverSelectionTimeoutMS=4000,
+            connectTimeoutMS=4000,
         )
         # Test connection by pinging the database
         client.admin.command("ping")
         print(f"[DATABASE] SUCCESS: Connected to MongoDB database '{_settings.mongodb_database}'!")
         print("=" * 60 + "\n")
     except Exception as exc:
-        print("[DATABASE ERROR] FAILED to connect to MongoDB!")
-        print(f"Details: {exc}")
-        print("\nFix:")
-        print("1. Go to MongoDB Atlas (https://cloud.mongodb.com)")
-        print("2. Navigate to 'Network Access' -> Click 'Add IP Address'")
-        print("3. Select 'Allow Access from Anywhere' (0.0.0.0/0) and confirm.")
-        print("4. Verify your username and password in MONGODB_URL in .env.")
-        print("=" * 60 + "\n")
-        raise ConnectionError(
-            f"Could not connect to MongoDB. Please check your Atlas Network Access (IP whitelist) and credentials. Error: {exc}"
-        ) from exc
+        print("\n" + "!" * 60)
+        print("[DATABASE WARNING] Could not connect to MongoDB Atlas!")
+        print(f"Reason: {exc}")
+        print("\nCommon fixes for Atlas:")
+        print("1. Go to cloud.mongodb.com -> Network Access -> Add IP Address")
+        print("2. Choose 'Allow Access from Anywhere' (0.0.0.0/0)")
+        print("3. Check database user password in .env")
+        print("\n--> FALLING BACK TO IN-MEMORY MODE (mongomock) so your server stays running!")
+        print("!" * 60 + "\n")
+        client = mongomock.MongoClient()
 else:
     print("\n" + "=" * 60)
     print("[DATABASE NOTICE] Running in MEMORY mode (mongomock).")

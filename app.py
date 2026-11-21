@@ -77,10 +77,12 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 # MIDDLEWARE & ROUTER SETUP
 # =========================================================
 
-# Allow cross-origin requests from frontend apps (React, Vue, mobile apps, etc.)
+# Allow cross-origin requests from frontend apps (React, Vite, Next.js, HTML)
+# Note: Using allow_origin_regex allows credentials (cookies) to work from any origin
+# without triggering browser CORS "Failed to fetch" errors.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_allow_origins or ["*"],
+    allow_origin_regex=r"^https?://.*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
